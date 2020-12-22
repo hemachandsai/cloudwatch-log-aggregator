@@ -178,7 +178,11 @@ func getProgressString(isCompleted bool) string {
 	for i := 0; i <= int(math.Floor(currentProgress)); i++ {
 		text += "="
 	}
-	text += ">] " + strconv.Itoa(int(math.Floor(currentProgress))) + "%"
+	text += ">"
+	for i := 0; i < 100-int(math.Floor(currentProgress)); i++ {
+		text += " "
+	}
+	text += "] " + strconv.Itoa(int(math.Floor(currentProgress))) + "%"
 	if isCompleted {
 		text += "\n"
 	}
@@ -226,19 +230,18 @@ func startLogsQuery(queryInputData []int64) {
 	if queryInputData[0] == 0 || queryInputData[1] == 0 {
 		panic("Invalid input recieved through channel")
 	}
-	//fmt.Println("Querying from ", time.Unix(queryInputData[0], 0).UTC().Format(inputDateFormat), "to", time.Unix(queryInputData[1], 0).UTC().Format(inputDateFormat))
+	fmt.Println("Querying from ", time.Unix(queryInputData[0], 0).UTC().Format(inputDateFormat), "to", time.Unix(queryInputData[1], 0).UTC().Format(inputDateFormat))
 	queryInputStruct := &cloudwatchlogs.StartQueryInput{
 		LogGroupName: aws.String(programInput.LogGroupName),
 		StartTime:    aws.Int64(queryInputData[0]),
 		EndTime:      aws.Int64(queryInputData[1]),
-		Limit:        aws.Int64(10000),
 		QueryString:  aws.String(programInput.LogQuery),
 	}
 	queryOutput, err := cloudWatchSession.StartQuery(queryInputStruct)
 	if err != nil {
 		if awsErr, ok := err.(awserr.Error); ok {
 			if awsErr.Code() == credentials.ErrNoValidProvidersFoundInChain.Code() {
-				logError("AWS authentication failed. Please configure aws-cli in the system or load the access_key and secret_access_token to environment variables.\nPlease refer to https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/configuring-sdk.html#specifying-credentials for more info")
+				logError("AWS authentication failed. Please configure aws-cli in the system or load the access_key_id, aws_secret_access_key to AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY environment variables.\nPlease refer to https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/configuring-sdk.html#specifying-credentials for more info")
 			} else if awsErr.Code() == cloudwatchlogs.ErrCodeResourceNotFoundException {
 				logError("No Resource found with the given LogGroupName. Please make sure the LogGroupName and AWSRegion are correctly mentioned in the config.toml file")
 			} else if awsErr.Code() == cloudwatchlogs.ErrCodeMalformedQueryException {
@@ -294,6 +297,7 @@ func getLogsQueryOutput(queryOutputData []interface{}) {
 		time.Sleep(time.Millisecond * 100)
 		totalTasks = totalTasks + 2
 	} else {
+		fmt.Println("Query Output Recieved ", time.Unix(queryOutputData[1].([]int64)[0], 0).UTC().Format(inputDateFormat), "to", time.Unix(queryOutputData[1].([]int64)[1], 0).UTC().Format(inputDateFormat), len(queryOutput.Results))
 		for _, eachRecord := range queryOutput.Results {
 			var date string
 			var dataString string
@@ -321,7 +325,9 @@ func getLogsQueryOutput(queryOutputData []interface{}) {
 					dataString = dataString[:len(dataString)-1] + "\n"
 				}
 			}
+			mapMutex.Lock()
 			queryOutputMap[date] += dataString
+			mapMutex.Unlock()
 		}
 	}
 	//we are considering the task as completed only upon recieving the actual outut for the submitted query id
@@ -343,7 +349,8 @@ func writeOutputToFiles() {
 	}
 
 	sort.Strings(datesArray)
-	for _, val := range queryOutputMap {
+	for index, val := range datesArray {
+		fmt.Println("Records date: "+val+" length: ", len(strings.Split(queryOutputMap[val], "\n")))
 		// err := ioutil.WriteFile(path.Join(currentDir, key+".csv"), []byte(val), 0644)
 		// if err != nil {
 		// 	fmt.Println(err)
@@ -358,7 +365,11 @@ func writeOutputToFiles() {
 		}
 
 		defer file.Close()
-		_, err = file.WriteString(fieldHeaderString + val)
+		if index == 0 {
+			_, err = file.WriteString(fieldHeaderString + queryOutputMap[val])
+		} else {
+			_, err = file.WriteString(queryOutputMap[val])
+		}
 		if err != nil {
 			logError("Error: Failed writing to file: " + err.Error())
 			os.Exit(1)
