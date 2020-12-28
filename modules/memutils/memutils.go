@@ -15,8 +15,8 @@ var (
 
 func CheckSystemMemory() {
 	v, _ := mem.VirtualMemory()
-	if v.Free < 1*1024*1024*1024 {
-		logError("Available system memory less than 1GB. Please try again")
+	if v.Total < 2*1024*1024*1024 {
+		logError("Total system memory less than 2GB. Please try again")
 		os.Exit(1)
 	}
 }

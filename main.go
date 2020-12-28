@@ -50,7 +50,7 @@ var (
 	clearANSISequence       = "\033[H\033[2J\033[3J"
 	fieldHeaderString       string
 	emptyHeaderString       bool
-	debug                   = true
+	debug                   = false
 	isWindows               bool
 )
 

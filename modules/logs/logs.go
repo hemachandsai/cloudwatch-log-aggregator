@@ -10,11 +10,10 @@ import (
 )
 
 var (
-	logChannel     = make(chan string)
-	dateOnlyFormat = "2006-01-02"
-	reset          = "\033[0m"
-	red            = "\033[31m"
-	Debug          bool
+	logChannel = make(chan string)
+	reset      = "\033[0m"
+	red        = "\033[31m"
+	Debug      bool
 )
 
 func Init() {
@@ -37,7 +36,7 @@ func writeLogToFile() {
 	if err != nil {
 		panic(err)
 	}
-	localDateString := time.Now().UTC().Add(-(5*60 + 30) * time.Minute).Format(dateOnlyFormat)
+	localDateString := time.Now().UTC().Add(-(5*60 + 30) * time.Minute).Format("2006-01-02")
 	file, err := os.OpenFile(path.Join(currentDir, strings.Replace(localDateString, ":", "-", -1)+"-cloudwatch-debug.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		LogError("Error: Failed opening file: " + err.Error())
