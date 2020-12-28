@@ -1,19 +1,21 @@
 package main
 
 import (
-	"cloudwatch-log-aggregator/modules/colors"
+	"cloudwatch-log-aggregator/modules/files"
+	"cloudwatch-log-aggregator/modules/logs"
+	"cloudwatch-log-aggregator/modules/memutils"
+	"cloudwatch-log-aggregator/modules/types"
+	"cloudwatch-log-aggregator/modules/validations"
 	"fmt"
-	"io/ioutil"
 	"math"
+	"math/big"
 	"os"
-	"path"
-	"sort"
+	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/BurntSushi/toml"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -34,7 +36,7 @@ var (
 	startQueryChannel       = make(chan []int64)
 	getQueryOpChannel       = make(chan []interface{})
 	mapMutex                = sync.RWMutex{}
-	programInput            programInputTOML
+	programInput            types.ProgramInputTOML
 	inputDateFormat         = "2006-01-02T15:04:05"
 	dayInSeconds            = int64(24 * 60 * 60)
 	queryOutputMap          = map[string]string{}
@@ -42,27 +44,26 @@ var (
 	secondQuerycounter      = 0
 	totalTasks              = 0
 	completedTasks          = 0
-	maxConcurrentCallsToAWS = 8
+	maxConcurrentCallsToAWS = 10
 	totalRecordsMatched     = 0.0
-	totalRecordsScanned     = 0.0
+	totalRecordsScanned     = big.NewFloat(0.0)
+	clearANSISequence       = "\033[H\033[2J\033[3J"
 	fieldHeaderString       string
 	emptyHeaderString       bool
+	debug                   = true
+	isWindows               bool
 )
 
-type programInputTOML struct {
-	StartTime    string
-	EndTime      string
-	LogGroupName string
-	LogQuery     string
-	AWSRegion    string
-}
-
 func main() {
+	memutils.CheckSystemMemory()
+
 	fmt.Println("Started Execution")
 	programStartTime := time.Now()
-	parseToml()
-	validateTomlData()
 
+	initVariablesForSubModules()
+	validations.DoValidations()
+
+	go logs.Init()
 	//starting a goroutine which takes care of the logging process. Initialzing a head for high availability
 	go printProgressToTerminal(false)
 
@@ -71,17 +72,17 @@ func main() {
 
 	startTime, err := time.Parse(inputDateFormat, programInput.StartTime)
 	if err != nil {
-		logError("Error: Invalid StartTime format. Please use yyyy-mm-ddThh:mm:ss format in config.toml file")
+		logs.LogError("Error: Invalid StartTime format. Please use yyyy-mm-ddThh:mm:ss format in config.toml file")
 		os.Exit(1)
 	}
 	endTime, err := time.Parse(inputDateFormat, programInput.EndTime)
 	if err != nil {
-		logError("Error: Invalid EndTime format. Please use yyyy-mm-ddThh:mm:ss format in config.toml file")
+		logs.LogError("Error: Invalid EndTime format. Please use yyyy-mm-ddThh:mm:ss format in config.toml file")
 		os.Exit(1)
 	}
 
 	if startTime.After(endTime) || startTime.Equal(endTime) {
-		logError("Error: Invalid Input Time. StartTime should be less than EndTime")
+		logs.LogError("Error: Invalid Input Time. StartTime should be less than EndTime")
 		os.Exit(1)
 	}
 
@@ -92,7 +93,7 @@ func main() {
 	go initializeGoRoutines()
 
 	for startTimeEpoch+dayInSeconds-1 <= endTimeEpoch {
-		startQueryChannel <- []int64{startTimeEpoch, startTimeEpoch + dayInSeconds - 1}
+		startQueryChannel <- []int64{startTimeEpoch, startTimeEpoch + dayInSeconds}
 		startTimeEpoch += dayInSeconds
 		totalTasks++
 	}
@@ -108,62 +109,48 @@ func main() {
 	printProgressToTerminal(true)
 	fmt.Println("Completing...Writing Output to Files")
 
-	writeOutputToFiles()
+	files.WriteOutputToFiles()
 	fmt.Println("Completed fetching logs from clodwatch for the given time span")
-	fmt.Println(fmt.Sprintf("Execution Stats:\nTotal Time Taken: %v\nTotal Records Scanned: %v\nTotal Records Matched: %v", time.Since(programStartTime), totalRecordsScanned, totalRecordsMatched))
-
+	fmt.Printf("Execution Stats:\n\tTotal Time Taken: %v\n\tTotal Records Scanned: %.2f\n\tTotal Records Matched: %v\n", time.Since(programStartTime), totalRecordsScanned, totalRecordsMatched)
 }
 
-func parseToml() {
-	byteData, err := ioutil.ReadFile("./config.toml")
-	if err != nil {
-		logError("Config.toml file doesn't exist.Please create a config.toml file in the same directory")
-		os.Exit(1)
-	}
-	stringFileData := string(byteData)
-	if _, err := toml.Decode(stringFileData, &programInput); err != nil {
-		logError("Error in TOML file: " + err.Error())
-		os.Exit(1)
+func initVariablesForSubModules() {
+	validations.ProgramInput = &programInput
+	logs.Debug = debug
+	files.MapMutex = &mapMutex
+	files.QueryOutputMap = &queryOutputMap
+	files.InputDateFormat = &inputDateFormat
+	files.FieldHeaderString = &fieldHeaderString
+	if runtime.GOOS == "windows" {
+		isWindows = true
 	}
 }
 
-func validateTomlData() {
-	isInvalid := false
-	if programInput.StartTime == "" {
-		isInvalid = true
-		logError("Error in config.toml file data. StartTime cannot be empty")
-	}
-	if programInput.EndTime == "" {
-		isInvalid = true
-		logError("Error in config.toml file data. EndTime cannot be empty")
-	}
-	if programInput.LogGroupName == "" {
-		isInvalid = true
-		logError("Error in config.toml file data. LogGroupName cannot be empty")
-	}
-	if programInput.LogQuery == "" {
-		isInvalid = true
-		logError("Error in config.toml file data. LogQuery cannot be empty")
-	}
-	if programInput.AWSRegion == "" {
-		isInvalid = true
-		logError("Error in config.toml file data. AWSRegion cannot be empty")
-	}
-	if isInvalid {
-		os.Exit(1)
+func clearTerminal() {
+	if isWindows {
+		cmd := exec.Command("cmd", "/c", "cls")
+		cmd.Stdout = os.Stdout
+		cmd.Run()
+	} else {
+		fmt.Print(clearANSISequence)
 	}
 }
 
 func printProgressToTerminal(isCompleted bool) {
 	for completedTasks < totalTasks || totalTasks == 0 {
-		//fmt.Println("invoked", completedTasks, totalTasks)
-		if completedTasks != 0 && totalTasks != 0 {
-			fmt.Print("\033[2K\r" + getProgressString(false))
+		if totalTasks != 0 {
+			clearTerminal()
+			fmt.Print(memutils.GetMemUsageString() + "\n" + getProgressString(false))
 		}
-		time.Sleep(time.Second * 1)
+		if isWindows {
+			time.Sleep(time.Second * 2)
+		} else {
+			time.Sleep(time.Second * 1)
+		}
 	}
 	if isCompleted {
-		fmt.Print("\033[2K\r" + getProgressString(true))
+		clearTerminal()
+		fmt.Print(memutils.GetMemUsageString() + "\n" + getProgressString(true))
 	}
 }
 
@@ -196,8 +183,8 @@ func initializeGoRoutines() {
 			// add 1 to waitGroup counter as one goroutine is going to be initialized
 			waitGroup.Add(1)
 			go func() {
-				// fmt.Println("counter1", firstQuerycounter, secondQuerycounter)
-				for firstQuerycounter >= maxConcurrentCallsToAWS {
+				logs.LogToFile(fmt.Sprintf("counter1	%v, %v", firstQuerycounter, secondQuerycounter))
+				for firstQuerycounter >= maxConcurrentCallsToAWS-1 {
 					time.Sleep(time.Millisecond * 300)
 				}
 				firstQuerycounter++
@@ -214,7 +201,7 @@ func initializeGoRoutines() {
 			// add 1 to waitGroup counter as one goroutine is going to be initialized
 			waitGroup.Add(1)
 			go func() {
-				// fmt.Println("counter", firstQuerycounter, secondQuerycounter)
+				logs.LogToFile(fmt.Sprintf("counter1	%v, %v", firstQuerycounter, secondQuerycounter))
 				secondQuerycounter++
 				defer func() {
 					secondQuerycounter--
@@ -230,24 +217,26 @@ func startLogsQuery(queryInputData []int64) {
 	if queryInputData[0] == 0 || queryInputData[1] == 0 {
 		panic("Invalid input recieved through channel")
 	}
-	fmt.Println("Querying from ", time.Unix(queryInputData[0], 0).UTC().Format(inputDateFormat), "to", time.Unix(queryInputData[1], 0).UTC().Format(inputDateFormat))
+	logs.LogToFile(fmt.Sprintf("Querying from %v to %v", time.Unix(queryInputData[0], 0).UTC().Format(inputDateFormat), time.Unix(queryInputData[1], 0).UTC().Format(inputDateFormat)))
 	queryInputStruct := &cloudwatchlogs.StartQueryInput{
 		LogGroupName: aws.String(programInput.LogGroupName),
 		StartTime:    aws.Int64(queryInputData[0]),
 		EndTime:      aws.Int64(queryInputData[1]),
-		QueryString:  aws.String(programInput.LogQuery),
+		QueryString:  aws.String(programInput.LogQuery + "\n| limit 10000"),
 	}
 	queryOutput, err := cloudWatchSession.StartQuery(queryInputStruct)
 	if err != nil {
 		if awsErr, ok := err.(awserr.Error); ok {
 			if awsErr.Code() == credentials.ErrNoValidProvidersFoundInChain.Code() {
-				logError("AWS authentication failed. Please configure aws-cli in the system or load the access_key_id, aws_secret_access_key to AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY environment variables.\nPlease refer to https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/configuring-sdk.html#specifying-credentials for more info")
+				logs.LogError("AWS authentication failed. Please configure aws-cli in the system or load the access_key_id, aws_secret_access_key to AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY environment variables.\nPlease refer to https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/configuring-sdk.html#specifying-credentials for more info")
 			} else if awsErr.Code() == cloudwatchlogs.ErrCodeResourceNotFoundException {
-				logError("No Resource found with the given LogGroupName. Please make sure the LogGroupName and AWSRegion are correctly mentioned in the config.toml file")
+				logs.LogError("No Resource found with the given LogGroupName. Please make sure the LogGroupName and AWSRegion are correctly mentioned in the config.toml file")
 			} else if awsErr.Code() == cloudwatchlogs.ErrCodeMalformedQueryException {
-				logError("Invalid LogQuery. Please double check the LogQuery in the config.toml file")
+				logs.LogError("Invalid LogQuery. Please double check the LogQuery in the config.toml file")
+			} else if awsErr.Code() == cloudwatchlogs.ErrCodeLimitExceededException {
+				logs.LogError("AWS Concurrency Limit Exceeded. Might be some other people are using queries through aws dashboard. Please try again")
 			} else {
-				logError("Error: " + awsErr.Code() + " " + awsErr.Message())
+				logs.LogError("Error: " + awsErr.Code() + " " + awsErr.Message())
 			}
 			os.Exit(1)
 		} else {
@@ -269,8 +258,7 @@ func getLogsQueryOutput(queryOutputData []interface{}) {
 	if err != nil {
 		panic(err.Error())
 	}
-
-	if *queryOutput.Status != "Complete" {
+	if *queryOutput.Status != "Complete" && *queryOutput.Status != "Failed" {
 		time.Sleep(time.Millisecond * 500)
 		//if the query status is not complete we push the value back to channel after waiting for some time
 		getQueryOpChannel <- []interface{}{queryOutputData[0].(*string), []int64{queryOutputData[1].([]int64)[0], queryOutputData[1].([]int64)[1]}}
@@ -278,12 +266,8 @@ func getLogsQueryOutput(queryOutputData []interface{}) {
 		time.Sleep(time.Millisecond * 100)
 		return
 	}
-
-	//proceed if query status is completed
-	totalRecordsMatched += *queryOutput.Statistics.RecordsMatched
-	totalRecordsScanned += *queryOutput.Statistics.RecordsScanned
-
-	if *queryOutput.Statistics.RecordsMatched > float64(10000) {
+	logs.LogToFile(fmt.Sprintf("Query Output Recieved %v to %v, length: %v", time.Unix(queryOutputData[1].([]int64)[0], 0).UTC().Format(inputDateFormat), time.Unix(queryOutputData[1].([]int64)[1], 0).UTC().Format(inputDateFormat), len(queryOutput.Results)))
+	if *queryOutput.Statistics.RecordsMatched > float64(10000) || *queryOutput.Status == "Failed" {
 		//if number of output records are more than 10000 then split the timeframe to half and push to channel
 		difference := queryOutputData[1].([]int64)[1] - queryOutputData[1].([]int64)[0]
 		if difference < 5 {
@@ -291,16 +275,18 @@ func getLogsQueryOutput(queryOutputData []interface{}) {
 		}
 
 		startQueryChannel <- []int64{queryOutputData[1].([]int64)[0], int64(math.Floor(float64(queryOutputData[1].([]int64)[1] - (difference / 2))))}
-		startQueryChannel <- []int64{int64(math.Floor(float64(queryOutputData[1].([]int64)[1]-(difference/2)))) + 1, queryOutputData[1].([]int64)[1]}
+		startQueryChannel <- []int64{int64(math.Floor(float64(queryOutputData[1].([]int64)[1] - (difference / 2)))), queryOutputData[1].([]int64)[1]}
 
 		//this sleep command here is a sort of wierd fix to prevent race condition to delay the return of this function thereby delaying the defer statement in initializeGoRoutines method first anonymous block
 		time.Sleep(time.Millisecond * 100)
 		totalTasks = totalTasks + 2
 	} else {
-		fmt.Println("Query Output Recieved ", time.Unix(queryOutputData[1].([]int64)[0], 0).UTC().Format(inputDateFormat), "to", time.Unix(queryOutputData[1].([]int64)[1], 0).UTC().Format(inputDateFormat), len(queryOutput.Results))
+		//proceed if query status is completed
+		totalRecordsMatched += *queryOutput.Statistics.RecordsMatched
+		totalRecordsScanned = totalRecordsScanned.Add(big.NewFloat(*queryOutput.Statistics.RecordsScanned), totalRecordsScanned)
+		var dataString string
+		var date string
 		for _, eachRecord := range queryOutput.Results {
-			var date string
-			var dataString string
 			// var emptyHeaderString bool
 			for sindex, field := range eachRecord {
 				if *field.Field == "@ptr" {
@@ -325,60 +311,12 @@ func getLogsQueryOutput(queryOutputData []interface{}) {
 					dataString = dataString[:len(dataString)-1] + "\n"
 				}
 			}
-			mapMutex.Lock()
-			queryOutputMap[date] += dataString
-			mapMutex.Unlock()
 		}
+		mapMutex.Lock()
+		queryOutputMap[date] += dataString
+		mapMutex.Unlock()
 	}
 	//we are considering the task as completed only upon recieving the actual outut for the submitted query id
 	firstQuerycounter--
 	completedTasks++
-}
-
-func writeOutputToFiles() {
-	currentDir, err := os.Getwd()
-	if err != nil {
-		panic(err)
-	}
-	datesArray := []string{}
-
-	//map locks are necessary to prevent simultaneois reads and writes in high concurrent environments
-	mapMutex.Lock()
-	for key := range queryOutputMap {
-		datesArray = append(datesArray, key)
-	}
-
-	sort.Strings(datesArray)
-	for index, val := range datesArray {
-		fmt.Println("Records date: "+val+" length: ", len(strings.Split(queryOutputMap[val], "\n")))
-		// err := ioutil.WriteFile(path.Join(currentDir, key+".csv"), []byte(val), 0644)
-		// if err != nil {
-		// 	fmt.Println(err)
-		// 	os.Exit(1)
-		// }
-		//append to the output csv file
-		localDateString := time.Now().UTC().Add(-(5*60 + 30) * time.Minute).Format(inputDateFormat)
-		file, err := os.OpenFile(path.Join(currentDir, localDateString+"-cloudwatch-output.csv"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-		if err != nil {
-			logError("Error: Failed opening file: " + err.Error())
-			os.Exit(1)
-		}
-
-		defer file.Close()
-		if index == 0 {
-			_, err = file.WriteString(fieldHeaderString + queryOutputMap[val])
-		} else {
-			_, err = file.WriteString(queryOutputMap[val])
-		}
-		if err != nil {
-			logError("Error: Failed writing to file: " + err.Error())
-			os.Exit(1)
-		}
-	}
-	//unlocking the previous lock
-	mapMutex.Unlock()
-}
-
-func logError(msg string) {
-	fmt.Println(colors.Red + msg + colors.Reset)
 }
