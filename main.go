@@ -6,6 +6,7 @@ import (
 	"cloudwatch-log-aggregator/modules/memutils"
 	"cloudwatch-log-aggregator/modules/types"
 	"cloudwatch-log-aggregator/modules/validations"
+	"flag"
 	"fmt"
 	"math"
 	"math/big"
@@ -52,6 +53,7 @@ var (
 	emptyHeaderString       bool
 	debug                   = false
 	isWindows               bool
+	filterColumnName        string
 )
 
 func main() {
@@ -60,11 +62,12 @@ func main() {
 	fmt.Println("Started Execution")
 	programStartTime := time.Now()
 
+	parseCommandLineFlags()
 	initVariablesForSubModules()
 	validations.DoValidations()
 
+	//starting  goroutines which takes care of the logging process. Initialzing a head for high availability
 	go logs.Init()
-	//starting a goroutine which takes care of the logging process. Initialzing a head for high availability
 	go printProgressToTerminal(false)
 
 	newSession := session.Must(session.NewSession())
@@ -107,11 +110,26 @@ func main() {
 
 	//log complete progress to terminal
 	printProgressToTerminal(true)
-	fmt.Println("Completing...Writing Output to Files")
 
-	files.WriteOutputToFiles()
+	fmt.Println("Completing...Writing Output to Files")
+	filename := files.WriteOutputToFiles()
+	fmt.Println("Done...Writing Output to Files")
+
+	files.WriteFilteredOutputToFiles(filename)
+
 	fmt.Println("Completed fetching logs from clodwatch for the given time span")
 	fmt.Printf("Execution Stats:\n\tTotal Time Taken: %v\n\tTotal Records Scanned: %.2f\n\tTotal Records Matched: %v\n", time.Since(programStartTime), totalRecordsScanned, totalRecordsMatched)
+}
+
+func parseCommandLineFlags() {
+	filterInput := flag.String("filter", " ", "pass column names to filter for duplicates and use the latest record")
+	flag.Usage = func() {
+		fmt.Println("Usage of cloudwatch-log-aggregator:")
+		flag.PrintDefaults()
+		fmt.Println("")
+	}
+	flag.Parse()
+	filterColumnName = *filterInput
 }
 
 func initVariablesForSubModules() {
@@ -121,6 +139,7 @@ func initVariablesForSubModules() {
 	files.QueryOutputMap = &queryOutputMap
 	files.InputDateFormat = &inputDateFormat
 	files.FieldHeaderString = &fieldHeaderString
+	files.FilterColumnName = &filterColumnName
 	if runtime.GOOS == "windows" {
 		isWindows = true
 	}

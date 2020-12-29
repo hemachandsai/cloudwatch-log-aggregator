@@ -7,3 +7,8 @@ type ProgramInputTOML struct {
 	LogQuery     string
 	AWSRegion    string
 }
+
+type DuplicateTrackerInnerStruct struct {
+	DuplicateCounter int
+	LatestValue      string
+}
