@@ -2,6 +2,7 @@ package main
 
 import (
 	"cloudwatch-log-aggregator/modules/files"
+	"cloudwatch-log-aggregator/modules/helpers"
 	"cloudwatch-log-aggregator/modules/logs"
 	"cloudwatch-log-aggregator/modules/memutils"
 	"cloudwatch-log-aggregator/modules/types"
@@ -22,13 +23,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
+	"gopkg.in/alecthomas/kingpin.v2"
 )
-
-// parse toml
-// hanlde different envs of different os
-// make sure the command line input parsing is robust and as versatile as possible
-// struture output propely with good naming conventions
-// handle go lang multiprocessing code neatly
 
 var (
 	cloudWatchSession       *cloudwatchlogs.CloudWatchLogs
@@ -44,20 +40,31 @@ var (
 	secondQuerycounter      = 0
 	totalTasks              = 0
 	completedTasks          = 0
-	maxConcurrentCallsToAWS = 10
 	totalRecordsMatched     = 0.0
 	totalRecordsScanned     = big.NewFloat(0.0)
 	clearANSISequence       = "\033[H\033[2J\033[3J"
 	fieldHeaderString       string
 	emptyHeaderString       bool
-	debug                   = false
 	isWindows               bool
 )
 
-func main() {
-	memutils.CheckSystemMemory()
+// Variables to hold data from command line flags and args
+var (
+	app = kingpin.New("cloudwatch-log-aggregator", "A CLI tool to fetch all cloudwatch logs within given timeframe")
+	maxConcurrentCallsToAWS = app.Flag("concurrency", "Max concurrent calls to aws (Default value: 4) Min: 1 Max: 9").Short('c').PlaceHolder("4").Default("4").Int()
+	debugMode = app.Flag("debug", "Enable debug mode").Default("false").Bool()
+)
 
-	fmt.Println("Started Execution")
+func main() {
+	helpers.PrintBanner()
+	
+	app.HelpFlag.Short('h')
+	kingpin.MustParse(app.Parse(os.Args[1:]))
+	validateCommandLineArgs()
+
+	memutils.CheckSystemMemory()
+	fmt.Println("Started Program Execution")
+	fmt.Println("AWS Concurrency set to ", *maxConcurrentCallsToAWS)
 	programStartTime := time.Now()
 
 	initVariablesForSubModules()
@@ -107,7 +114,6 @@ func main() {
 
 	//log complete progress to terminal
 	printProgressToTerminal(true)
-	fmt.Println("Completing...Writing Output to Files")
 
 	files.WriteOutputToFiles()
 	fmt.Println("Completed fetching logs from clodwatch for the given time span")
@@ -116,7 +122,7 @@ func main() {
 
 func initVariablesForSubModules() {
 	validations.ProgramInput = &programInput
-	logs.Debug = debug
+	logs.Debug = *debugMode
 	files.MapMutex = &mapMutex
 	files.QueryOutputMap = &queryOutputMap
 	files.InputDateFormat = &inputDateFormat
@@ -140,6 +146,7 @@ func printProgressToTerminal(isCompleted bool) {
 	for completedTasks < totalTasks || totalTasks == 0 {
 		if totalTasks != 0 {
 			clearTerminal()
+			helpers.PrintBanner()
 			fmt.Print(memutils.GetMemUsageString() + "\n" + getProgressString(false))
 		}
 		if isWindows {
@@ -150,6 +157,7 @@ func printProgressToTerminal(isCompleted bool) {
 	}
 	if isCompleted {
 		clearTerminal()
+		helpers.PrintBanner()
 		fmt.Print(memutils.GetMemUsageString() + "\n" + getProgressString(true))
 	}
 }
@@ -169,10 +177,7 @@ func getProgressString(isCompleted bool) string {
 	for i := 0; i < 100-int(math.Floor(currentProgress)); i++ {
 		text += " "
 	}
-	text += "] " + strconv.Itoa(int(math.Floor(currentProgress))) + "%"
-	if isCompleted {
-		text += "\n"
-	}
+	text += "] " + strconv.Itoa(int(math.Floor(currentProgress))) + "%\n"
 	return text
 }
 
@@ -184,7 +189,7 @@ func initializeGoRoutines() {
 			waitGroup.Add(1)
 			go func() {
 				logs.LogToFile(fmt.Sprintf("counter1	%v, %v", firstQuerycounter, secondQuerycounter))
-				for firstQuerycounter >= maxConcurrentCallsToAWS-1 {
+				for firstQuerycounter >= *maxConcurrentCallsToAWS-1 {
 					time.Sleep(time.Millisecond * 300)
 				}
 				firstQuerycounter++
@@ -319,4 +324,11 @@ func getLogsQueryOutput(queryOutputData []interface{}) {
 	//we are considering the task as completed only upon recieving the actual outut for the submitted query id
 	firstQuerycounter--
 	completedTasks++
+}
+
+func validateCommandLineArgs(){
+	if *maxConcurrentCallsToAWS < 1 || *maxConcurrentCallsToAWS > 9 {
+		fmt.Println("concurrency value should be between 1 and 9")
+		os.Exit(1)
+	}
 }

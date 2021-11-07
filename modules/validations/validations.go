@@ -52,23 +52,23 @@ func validateTomlData() {
 	isInvalid := false
 	if ProgramInput.StartTime == "" {
 		isInvalid = true
-		logError("Error in config.toml file data. StartTime cannot be empty")
+		logError("Error during config.toml validation. StartTime cannot be empty")
 	}
 	if ProgramInput.EndTime == "" {
 		isInvalid = true
-		logError("Error in config.toml file data. EndTime cannot be empty")
+		logError("Error during config.toml validation. EndTime cannot be empty")
 	}
 	if ProgramInput.LogGroupName == "" {
 		isInvalid = true
-		logError("Error in config.toml file data. LogGroupName cannot be empty")
+		logError("Error during config.toml validation. LogGroupName cannot be empty")
 	}
 	if ProgramInput.LogQuery == "" {
 		isInvalid = true
-		logError("Error in config.toml file data. LogQuery cannot be empty")
+		logError("Error during config.toml validation. LogQuery cannot be empty")
 	}
 	if ProgramInput.AWSRegion == "" {
 		isInvalid = true
-		logError("Error in config.toml file data. AWSRegion cannot be empty")
+		logError("Error during config.toml validation. AWSRegion cannot be empty")
 	}
 	if isInvalid {
 		os.Exit(1)
