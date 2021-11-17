@@ -25,7 +25,7 @@
 
 
 ## How to use
-- Download the latest binary from the [releases section](releases) depending on the target platform
+- Download the latest binary from the [releases section](https://github.com/hemachandsai/cloudwatch-log-aggregator/releases) depending on the target platform
 - Create a config.toml file in the same directory as the downloaded binary and fill in the required details. Sample <b>config.toml</b> 👇
 ```
 StartTime = "2019-12-04T00:00:00"
