@@ -276,7 +276,7 @@ func getLogsQueryOutput(queryOutputData []interface{}) {
 		//if number of output records are more than 10000 then split the timeframe to half and push to channel
 		difference := queryOutputData[1].([]int64)[1] - queryOutputData[1].([]int64)[0]
 		if difference < 5 {
-			panic("Error: Too many records are present in a shorttime frame. Please query manually..")
+			panic("Error: Too many records are present in a shorttime frame of 5 seconds. Please query manually..")
 		}
 
 		startQueryChannel <- []int64{queryOutputData[1].([]int64)[0], int64(math.Floor(float64(queryOutputData[1].([]int64)[1] - (difference / 2))))}

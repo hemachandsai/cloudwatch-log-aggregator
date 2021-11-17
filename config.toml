@@ -1,15 +1,6 @@
-StartTime = "2020-12-04T00:00:00"
+StartTime = "2019-12-04T00:00:00"
 EndTime = "2020-12-15T23:59:59"
 LogGroupName = "/aws/lambda/testFunction"
 LogQuery = """fields @timestamp, @message
 | sort @timestamp desc"""
 AWSRegion = "us-east-1"
-
-# sample config
-# StartTime = "2020-12-01T12:59:59"
-# EndTime = "2020-12-05T12:59:59" 
-# LogGroupName = "TempLogGroup"
-# LogQuery = """fields @timestamp, @message
-#| sort @timestamp desc"""
-# AWSRegion = "us-east-1"
-
