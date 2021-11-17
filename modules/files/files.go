@@ -28,7 +28,7 @@ func WriteOutputToFiles() {
 	datesArray := []string{}
 
 	localDateString := time.Now().UTC().Add(-(5*60 + 30) * time.Minute).Format(*InputDateFormat)
-	outputFileName := strings.Replace(localDateString, ":", "-", -1)+"-cloudwatch-output.csv"
+	outputFileName := strings.Replace(localDateString, ":", "-", -1) + "-cloudwatch-output.csv"
 	outputPathName := path.Join(currentDir, outputFileName)
 
 	//map locks are necessary to prevent simultaneois reads and writes in high concurrent environments

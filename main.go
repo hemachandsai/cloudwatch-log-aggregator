@@ -27,37 +27,37 @@ import (
 )
 
 var (
-	cloudWatchSession       *cloudwatchlogs.CloudWatchLogs
-	waitGroup               = &sync.WaitGroup{}
-	startQueryChannel       = make(chan []int64)
-	getQueryOpChannel       = make(chan []interface{})
-	mapMutex                = sync.RWMutex{}
-	programInput            types.ProgramInputTOML
-	inputDateFormat         = "2006-01-02T15:04:05"
-	dayInSeconds            = int64(24 * 60 * 60)
-	queryOutputMap          = map[string]string{}
-	firstQuerycounter       = 0
-	secondQuerycounter      = 0
-	totalTasks              = 0
-	completedTasks          = 0
-	totalRecordsMatched     = 0.0
-	totalRecordsScanned     = big.NewFloat(0.0)
-	clearANSISequence       = "\033[H\033[2J\033[3J"
-	fieldHeaderString       string
-	emptyHeaderString       bool
-	isWindows               bool
+	cloudWatchSession   *cloudwatchlogs.CloudWatchLogs
+	waitGroup           = &sync.WaitGroup{}
+	startQueryChannel   = make(chan []int64)
+	getQueryOpChannel   = make(chan []interface{})
+	mapMutex            = sync.RWMutex{}
+	programInput        types.ProgramInputTOML
+	inputDateFormat     = "2006-01-02T15:04:05"
+	dayInSeconds        = int64(24 * 60 * 60)
+	queryOutputMap      = map[string]string{}
+	firstQuerycounter   = 0
+	secondQuerycounter  = 0
+	totalTasks          = 0
+	completedTasks      = 0
+	totalRecordsMatched = 0.0
+	totalRecordsScanned = big.NewFloat(0.0)
+	clearANSISequence   = "\033[H\033[2J\033[3J"
+	fieldHeaderString   string
+	emptyHeaderString   bool
+	isWindows           bool
 )
 
 // Variables to hold data from command line flags and args
 var (
-	app = kingpin.New("cloudwatch-log-aggregator", "A CLI tool to fetch all cloudwatch logs within given timeframe")
+	app                     = kingpin.New("cloudwatch-log-aggregator", "A CLI tool to fetch all cloudwatch logs within given timeframe")
 	maxConcurrentCallsToAWS = app.Flag("concurrency", "Max concurrent calls to aws (Default value: 4) Min: 1 Max: 9").Short('c').PlaceHolder("4").Default("4").Int()
-	debugMode = app.Flag("debug", "Enable debug mode").Default("false").Bool()
+	debugMode               = app.Flag("debug", "Enable debug mode").Default("false").Bool()
 )
 
 func main() {
 	helpers.PrintBanner()
-	
+
 	app.HelpFlag.Short('h')
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 	validateCommandLineArgs()
@@ -326,7 +326,7 @@ func getLogsQueryOutput(queryOutputData []interface{}) {
 	completedTasks++
 }
 
-func validateCommandLineArgs(){
+func validateCommandLineArgs() {
 	if *maxConcurrentCallsToAWS < 1 || *maxConcurrentCallsToAWS > 9 {
 		fmt.Println("concurrency value should be between 1 and 9")
 		os.Exit(1)
